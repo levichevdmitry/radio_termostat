@@ -1,3 +1,7 @@
+// Author: Nikopol
+// Date: 12.12.18
+// Version 1.1
+
 #include <SPI.h>
 #include <RH_RF22.h>
 #include <stdio.h>
@@ -10,15 +14,17 @@
 #define RELAY_C1_PIN  A1
 #define RELAY_C2_PIN  A2
 
-#define SLEEP_TIME        58000              // sleep time - 55 sec
-#define TIME_ACTIVE_WAIT  70000              // active wait 70 sec 
+#define SLEEP_TIME        58000             // sleep time - 55 sec
+#define TIME_ACTIVE_WAIT  70000             // active wait 70 sec 
 #define WAKING_UP_TIME    65
-#define BAT_MIN_LVL       2.0     // min battery voltage
+#define BAT_MIN_LVL       2.0               // min battery voltage
+#define MAX_LOST          3                 // max lost count value = ( MAX_LOST + 1);
 
 RH_RF22 rf22;
 unsigned char relay_old_state = 0;
 float batteryVoltage;
 unsigned long time_now, time_old;
+unsigned char lost_count = 0;
 
 void setup() {
   time_old = 0;
@@ -27,16 +33,19 @@ void setup() {
 
 void loop() {
   char batteryVoltageString[8] = "";
+  char k;
   batteryVoltage = getBandgap();
   dtostrf(batteryVoltage, 3, 2, batteryVoltageString);
 
   time_now = millis();
-  
+
   if (rf22.available())  {
     digitalWrite(LED_PIN, HIGH);
     uint8_t buf[RH_RF22_MAX_MESSAGE_LEN];   // буфер
     uint8_t len = sizeof(buf);              // вычесляем размер буфера
     rf22.recv(buf, &len);
+
+    lost_count = 0;
 
     Serial.print("buf: ");                // отправляем в Serial содержимое буфера
     Serial.println((char*)buf);
@@ -47,12 +56,14 @@ void loop() {
     Serial.print("Battery: ");                // отправляем в Serial содержимое буфера
     Serial.println(batteryVoltageString);
 
-    digitalWrite(DC_DC_EN_PIN, HIGH); // enable dc-dc converter
-    delay(100);
     if (buf[2] == '1' && relay_old_state == 0) {
+      digitalWrite(DC_DC_EN_PIN, HIGH); // enable dc-dc converter
+      sdelay(100);
       digitalWrite(RELAY_C2_PIN, HIGH);
       relay_old_state = 1;
     } else if (buf[2] == '0' && relay_old_state == 1) {
+      digitalWrite(DC_DC_EN_PIN, HIGH); // enable dc-dc converter
+      sdelay(100);
       digitalWrite(RELAY_C1_PIN, HIGH);
       relay_old_state = 0;
     }
@@ -61,12 +72,40 @@ void loop() {
     digitalWrite(RELAY_C2_PIN, LOW);
     digitalWrite(DC_DC_EN_PIN, LOW); // disable dc-dc converter
     digitalWrite(LED_PIN, LOW);
+    // debug
+    //--------------------------
+    rf22.sleep();
+    if (buf[2] == '1') {
+      sdelay(250);
+      digitalWrite(LED_PIN, HIGH);
+      sdelay(150);
+      digitalWrite(LED_PIN, LOW);
+    }
+    //--------------------------
     sleepNow();
     init_hw();
     time_old = millis();
   } else {
     if (time_now - time_old >= TIME_ACTIVE_WAIT) {
-      Serial.print("No packet recived. Go sleep."); 
+      Serial.println("No packet recived. Go sleep.");
+      for (k = 0; k < 4; k++) {
+        sdelay(200);
+        digitalWrite(LED_PIN, HIGH);
+        sdelay(150);
+        digitalWrite(LED_PIN, LOW);
+      }
+      
+      if (lost_count >= MAX_LOST && relay_old_state == 0) {
+        // set on boiler while return the signal
+        digitalWrite(DC_DC_EN_PIN, HIGH); // enable dc-dc converter
+        sdelay(100);
+        digitalWrite(RELAY_C2_PIN, HIGH);
+        relay_old_state = 1;
+        delay(20);
+        digitalWrite(RELAY_C2_PIN, LOW);
+      } else {
+        lost_count ++;
+      }
       sleepNow();
       init_hw();
       time_old = millis();
@@ -89,9 +128,17 @@ void init_hw() {
   batteryVoltage = getBandgap();
   if (batteryVoltage < BAT_MIN_LVL) {
     Serial.println("Change battery!");
+
+    // set on boiler
+    digitalWrite(DC_DC_EN_PIN, HIGH); // enable dc-dc converter
+    sdelay(100);
+    digitalWrite(RELAY_C2_PIN, HIGH);
+    delay(20);
+    digitalWrite(RELAY_C2_PIN, LOW);
+
     while (1) { // say to need change battery
       digitalWrite(LED_PIN, HIGH);
-      sdelay(100);
+      sdelay(150);
       digitalWrite(LED_PIN, LOW);
       sdelay(3000);
     }
