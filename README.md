@@ -18,3 +18,6 @@
 Ссылки:
  * [arduino-weather-station](https://github.com/tedor/arduino-weather-station)
  * [Arduino Sleep](https://github.com/cano64/ArduinoSleep)
+
+Copyright Nikopol
+
